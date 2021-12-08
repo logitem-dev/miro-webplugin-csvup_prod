@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8"/>
+</head>
+    
+<script src="https://miro.com/app/static/sdk.1.1.js"></script>
+<script src="./js/const.js"></script>
+<body>
+<form>
+
+	<input type="file" name="selfile" accept='.csv' required><br><br>
+
+    <textarea name="csv" rows="10" cols="40" readonly style='display:none'></textarea>
+	<div id="output" style="color:red; font-weight:bold; display:none;">アップロードが正常に完了しました。</div></br>
+
+	<button type="button" onclick='readCSV()'>アップロード</button>
+	<button type="button" id="close" onclick='closeWindow()'>閉じる</button>
+
+</form>
+
+<script>
+
+    //ダイアログでファイルが選択された時
+    var obj1 = document.getElementsByName("selfile");
+    obj1[0].addEventListener("change",function(evt){
+
+        var file = evt.target.files;
+
+        //FileReaderの作成
+        var reader = new FileReader();
+        //テキスト形式で読み込む
+        reader.readAsText(file[0]);
+        
+        //読込終了後の処理
+        reader.onload = function(ev){
+            //テキストエリアに表示する
+            document.forms[0].csv.value = reader.result;
+        }
+    },false);
+
+    async function readCSV(){
+
+      var obj1 = document.getElementsByName("csv");
+      let lines = obj1[0].value.split(/\r?\n/);
+      let datas = lines.map(line=> line.split(','));
+
+
+      // 出勤フラグでデータを振り分ける
+      var dataMap = new Map();
+      var notificationMap = new Map();
+      
+      await datas.forEach(d=> {
+		if(d[0].startsWith("*")){
+			// 周知事項
+			var listNotification = [];
+			for(var i=1;i<datas.length;i++){
+				if(d[i] != null){
+					listNotification.push(d[i]);
+				}
+			}
+			notificationMap.set(d[0].substring(1),listNotification);
+		  
+		}else{
+			dataMap.set(d[0], d[1]);
+		}
+      });
+      
+      await resetCards(dataMap, notificationMap);
+	
+      // ModalWindowを閉じる
+//      miro.board.ui.closeModal();
+	
+    }
+
+    async function resetCards(dataMap, notificationMap){
+
+	  // Frame用のクラス    
+      const frameclass = class{
+        constructor(name, x1, x2, y, row, col, posx, posy){
+          this.name = name;
+          this.x1 = x1;
+          this.x2 = x2;
+          this.y = y;
+          this.row = row;
+          this.col = col;
+          this.posx = posx;
+          this.posy = posy;
+        }
+        
+      }
+    
+
+      // 確認メッセージ表示
+      let needToClear = confirm("CSVファイルより配置情報を復元します。よろしいですか？");
+
+      if(needToClear){
+      
+      	document.body.style.cursor = 'wait';
+      	
+        var frameClassList = [];
+
+        // 全従業員カードオブジェクトの取得
+        let allCards = await miro.board.widgets.get({type: 'IMAGE'});
+
+        // 全フレームの取得
+        let allFrames = await miro.board.widgets.get({type: 'FRAME'});
+              
+        for(var i=0; i< allFrames.length; i++){
+
+			frameClassList.push(new frameclass(allFrames[i].title,					// name
+								allFrames[i].x - (allFrames[i].width / 2),			// x1
+								allFrames[i].x + (allFrames[i].width / 2),			// x2
+								allFrames[i].y - (allFrames[i].height / 2),			// y
+								0,													// row
+								1,													// col
+								allFrames[i].x - (allFrames[i].width / 2),			// posx
+								allFrames[i].y - (allFrames[i].height / 2)			// posy
+								)
+							);
+
+        }
+        
+        // 周知事項フレームの取得
+        let notificationFrames = frameClassList.filter(f=> f.name.indexOf("周知事項") != -1);
+
+   		const sleep = waitTime => new Promise( resolve => setTimeout(resolve, waitTime) );
+   		
+		var errMessage = document.getElementById("output");
+		
+		// CSV内の従業員番号をリストへ保持
+		var staffIdList = [];
+		for (const [key, value] of dataMap) {
+			staffIdList.push(key);
+		}
+				
+		// CSV内の配置が管理外になっているデータを取得する
+		var listOut = [];
+		for (const [key, value] of dataMap) {
+			if(value === "管理外"){
+			  listOut.push(key);
+			}
+		}		
+				
+		var listOutCard = [];
+		
+        // カードオブジェクトを各Frame上に移動
+		for(let i=0; i< allCards.length; i++){
+			var card = allCards[i];
+				        
+			if(i >0 && i % 10 == 0){
+				await sleep(10000);
+			}
+        
+			var tojson = JSON.stringify(card.metadata);
+			var fromjson = JSON.parse(tojson);
+
+			if(([client_id] in fromjson) && ('staffid' in fromjson[client_id])){
+			
+				var staffId = fromjson[client_id]['staffid'];
+				// CSVファイルにない、もしくはCSV内の配置が管理外のカードは対象外リストへ保存する
+				if(!staffIdList.includes(staffId) || listOut.includes(staffId)){
+					listOutCard.push(card);
+				}else{
+					var frameName = dataMap.get(staffId);
+					var frame = frameClassList.filter(f=> f.name.toUpperCase() === frameName.toUpperCase());
+					
+					// 該当するフレームが存在しない場合は管理外フレームへ
+					if(frame.length === 0){
+						listOutCard.push(card);
+					}else{
+						// 該当するフレームへ移動
+						miro.board.widgets.transformDelta(card, (frame[0].posx+card.bounds.width/2+20)-card.x, (frame[0].posy+card.bounds.height/2+20)-card.y)
+								.catch(error=> {
+									document.body.style.cursor = 'auto';
+									errMessage.innerHTML = "配置情報復元に失敗しました。";
+
+								});
+
+						frame[0].posx = frame[0].x1 + (card.bounds.width + 20) * frame[0].col;
+					  
+						if(frame[0].posx + card.bounds.width > frame[0].x2 - 20){       // Frameの横幅を超ええる場合は改行
+							frame[0].posx = frame[0].x1;
+							frame[0].col = 1;
+							frame[0].posy = frame[0].y + ((card.bounds.height+20) * ++frame[0].row);
+						}else{
+							frame[0].col++;                
+						}
+						
+					}
+				}				
+
+			}
+				
+        }
+        
+    	// 管理外カードの移動
+		var frameOut = frameClassList.filter(f=> f.name === "管理外");
+    	
+    	for(var i=0;i<listOutCard.length;i++){
+    		var card = listOutCard[i];
+    		
+			if(i >0 && i % 10 == 0){
+				await sleep(10000);
+			}
+    		
+			miro.board.widgets.transformDelta(card, (frameOut[0].posx+card.bounds.width/2+20)-card.x, (frameOut[0].posy+card.bounds.height/2+20)-card.y)
+					.catch(error=> {
+						document.body.style.cursor = 'auto';
+						//miro.showNotification('ボードの初期化に失敗しました。');
+								errMessage.innerHTML = "配置情報復元に失敗しました。";
+
+					});
+
+			frameOut[0].posx = frameOut[0].x1 + (card.bounds.width + 20) * frameOut[0].col;
+		  
+			if(frameOut[0].posx + card.bounds.width > frameOut[0].x2 - 20){       // Frameの横幅を超ええる場合は改行
+				frameOut[0].posx = frameOut[0].x1;
+				frameOut[0].col = 1;
+				frameOut[0].posy = frameOut[0].y + ((card.bounds.height+20) * ++frameOut[0].row);
+			}else{
+				frameOut[0].col++;                
+			}
+    		
+    		
+    	}
+    	
+    	// 周知事項
+		for(var i=0; i<notificationFrames.length;i++){
+			var frame = notificationFrames[i];
+			
+			var notificationList = notificationMap.get(frame.name);
+			
+			if(notificationList != null){
+			
+				for(var j=0;j<notificationList.length;j++){
+					var text = notificationList[j];
+					var sticker = await miro.board.widgets.create({type: 'sticker', text:text, "scale":3.5});
+
+					miro.board.widgets.transformDelta(sticker[0], (frame.posx+sticker[0].bounds.width/2+20)-sticker[0].x, (frame.posy+sticker[0].bounds.height/2+20)-sticker[0].y)
+							.catch(error=> {
+								document.body.style.cursor = 'auto';
+								//miro.showNotification('ボードの初期化に失敗しました。');
+										errMessage.innerHTML = "周知事項の復元に失敗しました。";
+
+							});
+					
+					
+					frame.posx = frame.x1 + (sticker[0].bounds.width + 20) * frame.col;
+				  
+					if(frame.posx + sticker[0].bounds.width > frame.x2 - 20){       // Frameの横幅を超ええる場合は改行
+						frame.posx = frame.x1;
+						frame.col = 1;
+						frame.posy = frame.y1 + ((sticker[0].bounds.height+20) * ++frame.row);
+					}else{
+						frame.col++;
+					}
+				}
+			}
+			
+		}
+        
+
+		document.body.style.cursor = 'auto';
+		errMessage.style.display='block';
+		
+      }
+    }
+
+    function closeWindow(){
+        miro.board.ui.closeModal();
+    }
+
+</script>
+</body>
+</html>
