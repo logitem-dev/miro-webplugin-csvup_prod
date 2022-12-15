@@ -7,12 +7,12 @@ miro.onReady(() => {
 //			bottomBar: {
 //			},  
 			toolbar: {
-				title: 'CSVｱｯﾌﾟﾛｰﾄﾞ',
+				title: 'CSVｱｯﾌﾟﾛｰﾄﾞ(旧)',
 				toolbarSvgIcon: iconImportCsv, 
 				librarySvgIcon: iconImportCsv, 
 				positionPriority: 3,
 				onClick: async () => {
-					await miro.board.ui.openModal('uploadcsv.html', { width: 300, height: 200 });
+//					await miro.board.ui.openModal('uploadcsv.html', { width: 300, height: 200 });
 				}
 			}
 		}
