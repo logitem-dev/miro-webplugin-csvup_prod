@@ -6,8 +6,6 @@ miro.onReady(() => {
 		extensionPoints: {
 //			bottomBar: {
 //			},  
-			toolbar: {
-			}
 		}
 	})
 })
